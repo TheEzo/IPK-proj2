@@ -1,12 +1,3 @@
-/*
- * IPK.2015L
- *
- * Demonstration of trivial UDP communication.
- *
- * Ondrej Rysavy (rysavy@fit.vutbr.cz)
- *
- */
- 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,50 +6,178 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
-#include <getopts.h>
+#include <getopt.h>
+#include <unistd.h>
 
-#define BUFSIZE 512
-int main (int argc, const char * argv[]) {
-	int client_socket, port_number, bytestx, bytesrx;
+// type of message
+#define A 1 // ipv4
+
+void reformat_text(char *);
+
+/* www-inf.int-evry.fr/~hennequi/CoursDNS/NOTES-COURS_eng/msg.html */
+struct HEADER{
+    unsigned short id : 16; // identification
+
+    // control
+    char qr : 1; // request/response
+    char opcode : 4; // request type
+    char aa : 1; // authorative answer
+    char tc : 1; // truncated
+    char rd : 1; // recursion desired
+    char ra : 1; // recursion available
+    char zeros : 1; // zeros
+    char ad : 1; // authenticated data
+    char cd : 1; // checking disabled
+    char rcode : 4; // error codes
+
+    // other fields
+    short question_count : 16;
+    short answer_count : 16;
+    short authority_count : 16;
+    short additional_count : 16;
+};
+
+/* http://www.zytrax.com/books/dns/ch15/ */
+struct QUESTION{
+    short type;
+    short class;
+};
+
+int main (int argc, char * argv[]) {
+	int client_socket, port_number;
+    ssize_t bytesrx;
+    ssize_t bytestx;
     socklen_t serverlen;
     const char *server_hostname;
     struct hostent *server;
-    struct sockaddr_in server_address;
-    char buf[BUFSIZE];
-     
 
-    
-    /* 3. nalezeni IP adresy serveru a inicializace struktury server_address */
-    bzero((char *) &server_address, sizeof(server_address));
+    int c;
+    int flag_i = 0;
+    char *server_addr = NULL;
+    int timeout = 5;
+    char *type = NULL;
+
+    struct HEADER *header = NULL;
+    struct QUESTION *question = NULL;
+
+    char buffer[65536];
+    struct sockaddr_in server_address;
+    char *name = NULL;
+
+    // arguments checking
+    while((c = getopt(argc, argv, "hs:T:t:i")) != -1){
+        switch(c){
+            case 'h':
+                // print help...
+                exit(0);
+            case 's':
+                server_addr = (char *) malloc(strlen(optarg) * sizeof(char));
+                strcpy(server_addr, optarg);
+                break;
+            case 'T':
+                timeout = atoi(optarg);
+                break;
+            case 't':
+                type = (char *) malloc(strlen(optarg) * sizeof(char));
+                break;
+            case 'i':
+                flag_i = 1;
+                break;
+            case '?':
+                if (optopt == 's' || optopt == 'T' || optopt == 't')
+                    fprintf (stderr, "Option -%c requires an argument.\n", optopt);
+                else
+                    fprintf (stderr, "Unknown option `-%c'.\n", optopt);
+                exit(EXIT_FAILURE);
+        }
+    }
+
+    // alloc space for name and add one extra byte for reformatting
+    name = (char *) malloc(strlen(argv[argc-1]) * sizeof(char) + 1);
+    strcpy(name, "\1"); // insert extra space
+    strcat(name, argv[argc-1]);
+    reformat_text(name);
+
+
+    // map struct header to buffer memory space
+    header = (struct HEADER *)&buffer;
+    header->id = 0; // sending only one request, no identification needed
+
+    header->qr = 0; // request = 0, response = 1
+    header->opcode = 0; // standard query?
+    header->aa = 0; // data are not authoritative
+    header->tc = 0; // data are not truncated
+    // recursion/iterative
+    if (flag_i){
+        header->rd = 0;
+        header->ra = 0;
+    }
+    else{
+        header->rd = 1;
+        header->ra = 1;
+    }
+
+    // rest is used by server in response
+    header->zeros = 0;
+    header->ad = 0;
+    header->cd = 0;
+    header->rcode = 0;
+
+    header->question_count = htons(1); // number of questions - only 1 on this example
+    header->answer_count = 0;
+    header->authority_count = 0;
+    header->additional_count = 0;
+
+    // move name to buffer
+    int i = sizeof(struct HEADER);
+    int j = 0;
+    while(j <= strlen(name)){
+        buffer[i] = name[j];
+        j++;
+        i++;
+    }
+    question = (struct QUESTION *)&buffer[sizeof(struct HEADER) + strlen(name)+1];
+    question->type = htons(A);
+    question->class = htons(1);
+
+    // initialize server address struct
     server_address.sin_family = AF_INET;
-    bcopy((char *)server->h_addr, (char *)&server_address.sin_addr.s_addr, server->h_length);
-    server_address.sin_port = htons(port_number);
-   
-    /* tiskne informace o vzdalenem soketu */ 
-    printf("INFO: Server socket: %s : %d \n", inet_ntoa(server_address.sin_addr), ntohs(server_address.sin_port));
-    
-    /* Vytvoreni soketu */
+    server_address.sin_port = htons(53);
+    server_address.sin_addr.s_addr = inet_addr(server_addr);
+
+
+    // socket creation
 	if ((client_socket = socket(AF_INET, SOCK_DGRAM, 0)) <= 0)
 	{
-		perror("ERROR: socket");
+		perror("Socket failed to create");
 		exit(EXIT_FAILURE);
 	}
-	    
-    /* nacteni zpravy od uzivatele */
-    bzero(buf, BUFSIZE);
-    printf("Please enter msg: ");
-    fgets(buf, BUFSIZE, stdin);
 
     /* odeslani zpravy na server */
     serverlen = sizeof(server_address);
-    bytestx = sendto(client_socket, buf, strlen(buf), 0, (struct sockaddr *) &server_address, serverlen);
+    bytestx = sendto(client_socket, (char *) buffer, sizeof(struct HEADER) + strlen(name)+1 + sizeof(struct QUESTION), 0, (struct sockaddr *) &server_address, serverlen);
     if (bytestx < 0) 
       perror("ERROR: sendto");
     
     /* prijeti odpovedi a jeji vypsani */
-    bytesrx = recvfrom(client_socket, buf, BUFSIZE, 0, (struct sockaddr *) &server_address, &serverlen);
+    bytesrx = recvfrom(client_socket, (char *) buffer, 65536, 0, (struct sockaddr *) &server_address, &serverlen);
     if (bytesrx < 0) 
       perror("ERROR: recvfrom");
-    printf("Echo from server: %s", buf);
+    printf("Echo from server: %s", buffer);
     return 0;
+}
+
+void reformat_text(char *url){
+    int i = 0;
+    while(i < strlen(url)){
+        int count = 1;
+        while(url[i+count] != '.'){
+            if(i+count >= strlen(url))
+                break;
+            count++;
+        }
+        count--;
+        url[i] = (char) count;
+        i += count + 1;
+    }
 }
