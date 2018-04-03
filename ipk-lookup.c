@@ -16,25 +16,27 @@ void reformat_text(char *);
 
 /* www-inf.int-evry.fr/~hennequi/CoursDNS/NOTES-COURS_eng/msg.html */
 struct HEADER{
-    unsigned short id : 16; // identification
+    short id; // identification // short is 2 bytes long
 
-    // control
-    char qr : 1; // request/response
-    char opcode : 4; // request type
-    char aa : 1; // authorative answer
-    char tc : 1; // truncated
-    char rd : 1; // recursion desired
-    char ra : 1; // recursion available
-    char zeros : 1; // zeros
-    char ad : 1; // authenticated data
-    char cd : 1; // checking disabled
-    char rcode : 4; // error codes
+    // control - according to non-functional code and link 'bit numbering standarts' was each block of 8 bits reversed
+    // reason is still unknown, but it works
+    unsigned char rd : 1; // recursion desired
+    unsigned char tc : 1; // truncated
+    unsigned char aa : 1; // authorative answer
+    unsigned char opcode : 4; // request type
+    unsigned char qr : 1; // request/response
+
+    unsigned char rcode : 4; // error codes
+    unsigned char cd : 1; // checking disabled
+    unsigned char ad : 1; // authenticated data
+    unsigned char zeros : 1; // zeros
+    unsigned char ra : 1; // recursion available
 
     // other fields
-    short question_count : 16;
-    short answer_count : 16;
-    short authority_count : 16;
-    short additional_count : 16;
+    short question_count;
+    short answer_count;
+    short authority_count;
+    short additional_count;
 };
 
 /* http://www.zytrax.com/books/dns/ch15/ */
@@ -60,7 +62,7 @@ int main (int argc, char * argv[]) {
     struct HEADER *header = NULL;
     struct QUESTION *question = NULL;
 
-    char buffer[65536];
+    unsigned char buffer[65536];
     struct sockaddr_in server_address;
     char *name = NULL;
 
@@ -101,7 +103,7 @@ int main (int argc, char * argv[]) {
 
     // map struct header to buffer memory space
     header = (struct HEADER *)&buffer;
-    header->id = 0; // sending only one request, no identification needed
+    header->id = htons(0); // sending only one request, no identification needed
 
     header->qr = 0; // request = 0, response = 1
     header->opcode = 0; // standard query?
@@ -114,7 +116,7 @@ int main (int argc, char * argv[]) {
     }
     else{
         header->rd = 1;
-        header->ra = 1;
+        header->ra = 0;
     }
 
     // rest is used by server in response
