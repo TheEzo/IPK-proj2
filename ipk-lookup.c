@@ -11,6 +11,10 @@
 
 // type of message
 #define A 1 // ipv4
+#define NS 2
+#define CNAME 5
+#define PTR 12
+#define AAAA 28
 
 void reformat_text(char *);
 
@@ -45,6 +49,14 @@ struct QUESTION{
     short class;
 };
 
+struct ANSWER{
+	unsigned short name;
+	unsigned short type;
+	unsigned short class;
+	unsigned long ttl;
+	unsigned short rdlength;
+};
+
 int main (int argc, char * argv[]) {
 	int client_socket, port_number;
     ssize_t bytesrx;
@@ -61,6 +73,7 @@ int main (int argc, char * argv[]) {
 
     struct HEADER *header = NULL;
     struct QUESTION *question = NULL;
+    struct ANSWER *answer = NULL;
 
     unsigned char buffer[65536];
     struct sockaddr_in server_address;
@@ -165,6 +178,11 @@ int main (int argc, char * argv[]) {
     bytesrx = recvfrom(client_socket, (char *) buffer, 65536, 0, (struct sockaddr *) &server_address, &serverlen);
     if (bytesrx < 0) 
       perror("ERROR: recvfrom");
+
+  	answer = (struct ANSWER*)&buffer[sizeof(struct HEADER) + strlen(name)+1 + sizeof(struct QUESTION)];
+  	printf("%d\n", answer->name);
+
+
     printf("Echo from server: %s", buffer);
     return 0;
 }
