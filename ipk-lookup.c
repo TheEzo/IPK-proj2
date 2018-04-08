@@ -16,44 +16,48 @@
 #define PTR 12
 #define AAAA 28
 
+#define EXIT_ARGS 2
+
 void reformat_text(char *);
 
+int foo(unsigned char*, char*);
+void val(unsigned char*, int*, int);
+
 /* www-inf.int-evry.fr/~hennequi/CoursDNS/NOTES-COURS_eng/msg.html */
-struct HEADER{
+struct DNS_MESSAGE{
     short id; // identification // short is 2 bytes long
 
     // control - according to non-functional code and link 'bit numbering standarts' was each block of 8 bits reversed
     // reason is still unknown, but it works
-    unsigned char rd : 1; // recursion desired
-    unsigned char tc : 1; // truncated
-    unsigned char aa : 1; // authorative answer
-    unsigned char opcode : 4; // request type
-    unsigned char qr : 1; // request/response
+    char rd : 1; // recursion desired
+    char tc : 1; // truncated
+    char aa : 1; // authorative answer
+    char opcode : 4; // request type
+    char qr : 1; // request/response
 
-    unsigned char rcode : 4; // error codes
-    unsigned char cd : 1; // checking disabled
-    unsigned char ad : 1; // authenticated data
-    unsigned char zeros : 1; // zeros
-    unsigned char ra : 1; // recursion available
+    char rcode : 4; // error codes
+    char cd : 1; // checking disabled
+    char ad : 1; // authenticated data
+    char zeros : 1; // zeros
+    char ra : 1; // recursion available
 
     // other fields
-    short question_count;
-    short answer_count;
-    short authority_count;
-    short additional_count;
+    unsigned short question_count;
+    unsigned short answer_count;
+    unsigned short authority_count;
+    unsigned short additional_count;
 };
 
 /* http://www.zytrax.com/books/dns/ch15/ */
 struct QUESTION{
-    short type;
-    short class;
+    unsigned short type;
+    unsigned short class;
 };
 
 struct ANSWER{
-	unsigned short name;
 	unsigned short type;
 	unsigned short class;
-	unsigned long ttl;
+	unsigned int ttl;
 	unsigned short rdlength;
 };
 
@@ -69,15 +73,16 @@ int main (int argc, char * argv[]) {
     int flag_i = 0;
     char *server_addr = NULL;
     int timeout = 5;
-    char *type = NULL;
+    int type = A;
 
-    struct HEADER *header = NULL;
+    struct DNS_MESSAGE *message = NULL;
     struct QUESTION *question = NULL;
     struct ANSWER *answer = NULL;
+    char answer_name[512];
 
-    unsigned char buffer[65536];
+    unsigned char buffer[512];
     struct sockaddr_in server_address;
-    char *name = NULL;
+    char name[512];
 
     // arguments checking
     while((c = getopt(argc, argv, "hs:T:t:i")) != -1){
@@ -93,7 +98,20 @@ int main (int argc, char * argv[]) {
                 timeout = atoi(optarg);
                 break;
             case 't':
-                type = (char *) malloc(strlen(optarg) * sizeof(char));
+                if(!strcmp(optarg, "A"))
+                    type = A;
+                else if(!strcmp(optarg, "NS"))
+                    type = NS;
+                else if(!strcmp(optarg, "CNAME"))
+                    type = CNAME;
+                else if(!strcmp(optarg, "PTR"))
+                    type = PTR;
+                else if(!strcmp(optarg, "AAAA"))
+                    type = AAAA;
+                else{
+
+                    exit(EXIT_ARGS);
+                }
                 break;
             case 'i':
                 flag_i = 1;
@@ -103,56 +121,58 @@ int main (int argc, char * argv[]) {
                     fprintf (stderr, "Option -%c requires an argument.\n", optopt);
                 else
                     fprintf (stderr, "Unknown option `-%c'.\n", optopt);
-                exit(EXIT_FAILURE);
+                exit(EXIT_ARGS);
         }
     }
 
     // alloc space for name and add one extra byte for reformatting
-    name = (char *) malloc(strlen(argv[argc-1]) * sizeof(char) + 1);
+//    name = (char *)malloc(512 * sizeof(char));
     strcpy(name, "\1"); // insert extra space
     strcat(name, argv[argc-1]);
+    char saved_name[strlen(name)];
+    strcpy(saved_name, name+1);
     reformat_text(name);
 
 
-    // map struct header to buffer memory space
-    header = (struct HEADER *)&buffer;
-    header->id = htons(0); // sending only one request, no identification needed
+    // map struct DNS_MESSAGE to buffer memory space
+    message = (struct DNS_MESSAGE *)&buffer;
+    message->id = htons(0); // sending only one request, no identification needed
 
-    header->qr = 0; // request = 0, response = 1
-    header->opcode = 0; // standard query?
-    header->aa = 0; // data are not authoritative
-    header->tc = 0; // data are not truncated
+    message->qr = 0; // request = 0, response = 1
+    message->opcode = 0; // standard query?
+    message->aa = 0; // data are not authoritative
+    message->tc = 0; // data are not truncated
     // recursion/iterative
     if (flag_i){
-        header->rd = 0;
-        header->ra = 0;
+        message->rd = 0;
+        message->ra = 0;
     }
     else{
-        header->rd = 1;
-        header->ra = 0;
+        message->rd = 1;
+        message->ra = 0;
     }
 
     // rest is used by server in response
-    header->zeros = 0;
-    header->ad = 0;
-    header->cd = 0;
-    header->rcode = 0;
+    message->zeros = 0;
+    message->ad = 0;
+    message->cd = 0;
+    message->rcode = 0;
 
-    header->question_count = htons(1); // number of questions - only 1 on this example
-    header->answer_count = 0;
-    header->authority_count = 0;
-    header->additional_count = 0;
+    message->question_count = htons(1); // number of questions - only 1 on this example
+    message->answer_count = 0;
+    message->authority_count = 0;
+    message->additional_count = 0;
 
     // move name to buffer
-    int i = sizeof(struct HEADER);
+    int i = sizeof(struct DNS_MESSAGE);
     int j = 0;
     while(j <= strlen(name)){
         buffer[i] = name[j];
         j++;
         i++;
     }
-    question = (struct QUESTION *)&buffer[sizeof(struct HEADER) + strlen(name)+1];
-    question->type = htons(A);
+    question = (struct QUESTION *)&buffer[sizeof(struct DNS_MESSAGE) + strlen(name)+1];
+    question->type = htons(type);
     question->class = htons(1);
 
     // initialize server address struct
@@ -170,23 +190,116 @@ int main (int argc, char * argv[]) {
 
     /* odeslani zpravy na server */
     serverlen = sizeof(server_address);
-    bytestx = sendto(client_socket, (char *) buffer, sizeof(struct HEADER) + strlen(name)+1 + sizeof(struct QUESTION), 0, (struct sockaddr *) &server_address, serverlen);
-    if (bytestx < 0) 
-      perror("ERROR: sendto");
-    
+    bytestx = sendto(client_socket, (char *) buffer, sizeof(struct DNS_MESSAGE) + strlen(name) + 1 + sizeof(struct QUESTION), 0, (struct sockaddr *) &server_address, serverlen);
+    if (bytestx < 0) {
+        perror("ERROR: sendto");
+        exit(EXIT_FAILURE);
+    }
+
     /* prijeti odpovedi a jeji vypsani */
-    bytesrx = recvfrom(client_socket, (char *) buffer, 65536, 0, (struct sockaddr *) &server_address, &serverlen);
-    if (bytesrx < 0) 
-      perror("ERROR: recvfrom");
+    bytesrx = recvfrom(client_socket, (char *) buffer, 512, 0, (struct sockaddr *) &server_address, &serverlen);
+    if (bytesrx < 0){
+        perror("ERROR: recvfrom");
+        exit(EXIT_FAILURE);
+    }
 
-  	answer = (struct ANSWER*)&buffer[sizeof(struct HEADER) + strlen(name)+1 + sizeof(struct QUESTION)];
-  	printf("%d\n", answer->name);
+    char type_c[6];
+    switch(type){
+        case A:
+            strcpy(type_c, "A");
+            break;
+        case AAAA:
+            strcpy(type_c, "AAAA");
+            break;
+        case NS:
+            strcpy(type_c, "NS");
+            break;
+        case PTR:
+            strcpy(type_c, "PTR");
+            break;
+        case CNAME:
+            strcpy(type_c, "CNAME");
+            break;
+    }
+    // sizes + size of message ID
+    int magic = 2;
+    int answer_pos = sizeof(struct DNS_MESSAGE) + strlen(name) + 1 + sizeof(struct QUESTION) + magic;
 
+    answer = (struct ANSWER*)&buffer[answer_pos];
+//    foo(&buffer, sizeof(struct DNS_MESSAGE), &name);
+    if(ntohs(answer->type) != A && ntohs(answer->type) != AAAA && ntohs(answer->type) != NS &&
+       ntohs(answer->type) != PTR && ntohs(answer->type) != CNAME){
 
-    printf("Echo from server: %s", buffer);
+        exit(EXIT_FAILURE);
+    }
+    int len = 0;
+    for(int m = 0; m < ntohs(message->answer_count); m++){
+        if(ntohs(answer->type) == CNAME){
+            len = foo(&buffer[answer_pos + sizeof(struct ANSWER)-magic + m * ntohs(answer->rdlength)], name) +2;
+            printf("%s IN %s %s\n", saved_name, type_c, name);
+        }
+        else{
+            int ip[4];
+            val(&buffer[answer_pos + sizeof(struct ANSWER)-magic + m * ntohs(answer->rdlength)], &ip, ntohs(answer->type));
+
+            printf("%s IN %s %d.%d.%d.%d\n", saved_name, type_c, ip[0], ip[1], ip[2], ip[3]);
+            if (type != A && answer->type != type){
+                exit(EXIT_FAILURE);
+            }
+            len = 4;
+        }
+        answer = (struct ANSWER*)&buffer[answer_pos + (m+1) * ntohs(answer->rdlength) + len+1];
+    }
+
     return 0;
 }
 
+void val(unsigned char *buffer, int *ip, int type){
+    int i = 0;
+    while(i++ < 4){
+        ip[i-1] = (int)*buffer;
+        buffer++;
+    }
+}
+
+int foo(unsigned char* buffer, char *name){
+    int compressed = 0;
+    buffer++;
+    int i = 0, j=0;
+    char old_name[512];
+    strcpy(old_name, name+1);
+    bzero(name, 512);
+    while (*buffer != '\0' && !compressed) {
+        if (((int) *buffer) < 192) {
+            name[i++] = *buffer;
+        } else {
+            compressed = 1;
+
+        }
+        buffer++;
+    }
+    int len = i;
+    if (compressed) {
+        name[i++] = '.';
+        while(old_name[j] != '\0'){
+            if(compressed)
+                while(old_name[j++] > 'a');
+            if(old_name[j] < 'a' || old_name[j] > 'z'){
+                if(compressed)
+                    compressed = 0;
+                else
+                    name[i++] = '.';
+            }
+            else
+                name[i++] = old_name[j];
+            j++;
+        }
+    }
+    name[j+2] = '\0';
+    return len;
+}
+            
+/* make some strange format from ulr */
 void reformat_text(char *url){
     int i = 0;
     while(i < strlen(url)){
