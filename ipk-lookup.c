@@ -22,6 +22,7 @@ void reformat_text(char *);
 
 int foo(unsigned char*, char*);
 void val(unsigned char*, int*, int);
+void types(int, char *);
 
 /* www-inf.int-evry.fr/~hennequi/CoursDNS/NOTES-COURS_eng/msg.html */
 struct DNS_MESSAGE{
@@ -61,6 +62,11 @@ struct ANSWER{
 	unsigned short rdlength;
 };
 
+struct TIMEOUT{
+    int tv_sec;
+    int tv_usec;
+};
+
 int main (int argc, char * argv[]) {
 	int client_socket, port_number;
     ssize_t bytesrx;
@@ -79,6 +85,7 @@ int main (int argc, char * argv[]) {
     struct QUESTION *question = NULL;
     struct ANSWER *answer = NULL;
     char answer_name[512];
+    struct TIMEOUT *tv = (struct TIMEOUT*) malloc(sizeof(struct TIMEOUT));
 
     unsigned char buffer[512];
     struct sockaddr_in server_address;
@@ -187,6 +194,11 @@ int main (int argc, char * argv[]) {
 		perror("Socket failed to create");
 		exit(EXIT_FAILURE);
 	}
+	// set timeout
+    tv->tv_sec  = timeout;
+    tv->tv_usec = 0;
+    setsockopt( client_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
 
     /* odeslani zpravy na server */
     serverlen = sizeof(server_address);
@@ -204,29 +216,10 @@ int main (int argc, char * argv[]) {
     }
 
     char type_c[6];
-    switch(type){
-        case A:
-            strcpy(type_c, "A");
-            break;
-        case AAAA:
-            strcpy(type_c, "AAAA");
-            break;
-        case NS:
-            strcpy(type_c, "NS");
-            break;
-        case PTR:
-            strcpy(type_c, "PTR");
-            break;
-        case CNAME:
-            strcpy(type_c, "CNAME");
-            break;
-    }
-    // sizes + size of message ID
     int magic = 2;
     int answer_pos = sizeof(struct DNS_MESSAGE) + strlen(name) + 1 + sizeof(struct QUESTION) + magic;
 
     answer = (struct ANSWER*)&buffer[answer_pos];
-//    foo(&buffer, sizeof(struct DNS_MESSAGE), &name);
     if(ntohs(answer->type) != A && ntohs(answer->type) != AAAA && ntohs(answer->type) != NS &&
        ntohs(answer->type) != PTR && ntohs(answer->type) != CNAME){
 
@@ -235,20 +228,30 @@ int main (int argc, char * argv[]) {
     int len = 0;
     for(int m = 0; m < ntohs(message->answer_count); m++){
         if(ntohs(answer->type) == CNAME){
-            len = foo(&buffer[answer_pos + sizeof(struct ANSWER)-magic + m * ntohs(answer->rdlength)], name) +2;
+            foo(&buffer[answer_pos + sizeof(struct ANSWER)-magic], name);
+            types(ntohs(answer->type), &type_c);
             printf("%s IN %s %s\n", saved_name, type_c, name);
         }
-        else{
+        else if (ntohs(answer->type) == A){
             int ip[4];
-            val(&buffer[answer_pos + sizeof(struct ANSWER)-magic + m * ntohs(answer->rdlength)], &ip, ntohs(answer->type));
-
+            val(&buffer[answer_pos + sizeof(struct ANSWER)-magic ], &ip, ntohs(answer->type));
+            types(ntohs(answer->type), &type_c);
             printf("%s IN %s %d.%d.%d.%d\n", saved_name, type_c, ip[0], ip[1], ip[2], ip[3]);
             if (type != A && answer->type != type){
                 exit(EXIT_FAILURE);
             }
-            len = 4;
         }
-        answer = (struct ANSWER*)&buffer[answer_pos + (m+1) * ntohs(answer->rdlength) + len+1];
+        else {
+
+        }
+        if((m+1) < ntohs(message->answer_count)){
+            answer_pos += sizeof(struct ANSWER) + ntohs(answer->rdlength);
+            answer = (struct ANSWER*)&buffer[answer_pos];
+        }
+    }
+    if(type != ntohs(answer->type)){
+
+        exit(EXIT_FAILURE);
     }
 
     return 0;
@@ -265,7 +268,7 @@ void val(unsigned char *buffer, int *ip, int type){
 int foo(unsigned char* buffer, char *name){
     int compressed = 0;
     buffer++;
-    int i = 0, j=0;
+    int i = 0, j=0,len = 0;
     char old_name[512];
     strcpy(old_name, name+1);
     bzero(name, 512);
@@ -277,8 +280,11 @@ int foo(unsigned char* buffer, char *name){
 
         }
         buffer++;
+        len++;
     }
-    int len = i;
+
+    if(compressed)
+        len += 2;
     if (compressed) {
         name[i++] = '.';
         while(old_name[j] != '\0'){
@@ -296,7 +302,28 @@ int foo(unsigned char* buffer, char *name){
         }
     }
     name[j+2] = '\0';
+
     return len;
+}
+
+void types(int type, char *type_c){
+    switch(type){
+        case A:
+            strcpy(type_c, "A");
+            break;
+        case AAAA:
+            strcpy(type_c, "AAAA");
+            break;
+        case NS:
+            strcpy(type_c, "NS");
+            break;
+        case PTR:
+            strcpy(type_c, "PTR");
+            break;
+        case CNAME:
+            strcpy(type_c, "CNAME");
+            break;
+    }
 }
             
 /* make some strange format from ulr */
@@ -305,6 +332,8 @@ void reformat_text(char *url){
     while(i < strlen(url)){
         int count = 1;
         while(url[i+count] != '.'){
+            if(url[i+count] == ':')
+                break;
             if(i+count >= strlen(url))
                 break;
             count++;
